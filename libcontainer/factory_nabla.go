@@ -26,10 +26,8 @@ import (
 
 	"github.com/nabla-containers/runnc/libcontainer/configs"
 
-	"github.com/nabla-containers/runnc/utils"
-	"github.com/nabla-containers/runnc/nabla-lib/network"
-	"github.com/nabla-containers/runnc/nabla-lib/storage"
 	ll "github.com/nabla-containers/runnc/llif"
+	"github.com/nabla-containers/runnc/nabla-lib/network"
 
 	"github.com/pkg/errors"
 )
@@ -54,8 +52,8 @@ func New(root string, llcHandler ll.RunllcHandler, options ...func(*NablaFactory
 		}
 	}
 	l := &NablaFactory{
-		Root: root,
-        LLCHandler: llcHandler,
+		Root:       root,
+		LLCHandler: llcHandler,
 	}
 
 	for _, opt := range options {
@@ -70,8 +68,8 @@ func New(root string, llcHandler ll.RunllcHandler, options ...func(*NablaFactory
 type NablaFactory struct {
 	// Root directory for the factory to store state.
 	Root string
-    // LLCHandler is the set of low level container handlers
-    LLCHandler ll.RunllcHandler
+	// LLCHandler is the set of low level container handlers
+	LLCHandler ll.RunllcHandler
 }
 
 func isPauseContainer(config *configs.Config) bool {
@@ -85,27 +83,6 @@ func applyPauseHack(config *configs.Config, containerRoot string) (*configs.Conf
 
 	config.Args = []string{pauseNablaName}
 	return config, nil
-}
-
-func createRootfsISO(config *configs.Config, containerRoot string) (string, error) {
-	rootfsPath := config.Rootfs
-	targetISOPath := filepath.Join(containerRoot, "rootfs.iso")
-	for _, mount := range config.Mounts {
-		if (mount.Destination == "/etc/resolv.conf") ||
-			(mount.Destination == "/etc/hosts") ||
-			(mount.Destination == "/etc/hostname") {
-			dest := filepath.Join(rootfsPath, mount.Destination)
-			source := mount.Source
-			if err := utils.Copy(dest, source); err != nil {
-				return "", errors.Wrap(err, "Unable to copy " + source + " to " + dest)
-			}
-		}
-	}
-	_, err := storage.CreateIso(rootfsPath, &targetISOPath)
-	if err != nil {
-		return "", errors.Wrap(err, "Error creating iso from rootfs")
-	}
-	return targetISOPath, nil
 }
 
 // nablaTapName returns the tapname of a given container ID
@@ -168,10 +145,18 @@ func (l *NablaFactory) Create(id string, config *configs.Config) (Container, err
 			return nil, err
 		}
 	} else {
-		fsPath, err = createRootfsISO(config, containerRoot)
+		fshInput := &ll.FSCreateInput{}
+		fshInput.ContainerRoot = containerRoot
+		fshInput.Config = config
+
+		// TODO(runllc): Save llstate in container state
+		fsLLState, err := l.LLCHandler.FSH.FSCreateFunc(fshInput)
 		if err != nil {
 			return nil, err
 		}
+
+		// TODO(runllc): Remove this hardcode of fspath when execHandler is in
+		fsPath = fsLLState.Options["FsPath"]
 	}
 
 	err = network.CreateTapInterface(nablaTapName(id), nil, nil)
@@ -183,10 +168,11 @@ func (l *NablaFactory) Create(id string, config *configs.Config) (Container, err
 	}
 
 	c := &nablaContainer{
-		id:     id,
-		root:   containerRoot,
-		fsPath: fsPath,
-		config: config,
+		id:         id,
+		root:       containerRoot,
+		fsPath:     fsPath,
+		config:     config,
+		llcHandler: l.LLCHandler,
 		state: &State{
 			BaseState: BaseState{
 				ID:     id,
@@ -209,17 +195,18 @@ func (l *NablaFactory) Load(id string) (Container, error) {
 	}
 
 	c := &nablaContainer{
-		id:     id,
-		root:   containerRoot,
-		config: &state.Config,
-		state:  state,
+		id:         id,
+		root:       containerRoot,
+		config:     &state.Config,
+		state:      state,
+		llcHandler: l.LLCHandler,
 	}
 
 	return c, nil
 }
 
 func (l *NablaFactory) StartInitialization() error {
-	return initNabla()
+	return initNabla(l.LLCHandler)
 }
 
 func (l *NablaFactory) Type() string {
