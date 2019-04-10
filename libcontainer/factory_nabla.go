@@ -29,6 +29,7 @@ import (
 	"github.com/nabla-containers/runnc/utils"
 	"github.com/nabla-containers/runnc/nabla-lib/network"
 	"github.com/nabla-containers/runnc/nabla-lib/storage"
+	ll "github.com/nabla-containers/runnc/llif"
 
 	"github.com/pkg/errors"
 )
@@ -46,7 +47,7 @@ var (
 
 // New returns a linux based container factory based in the root directory and
 // configures the factory with the provided option funcs.
-func New(root string, options ...func(*NablaFactory) error) (Factory, error) {
+func New(root string, llcHandler ll.RunllcHandler, options ...func(*NablaFactory) error) (Factory, error) {
 	if root != "" {
 		if err := os.MkdirAll(root, 0700); err != nil {
 			return nil, err
@@ -54,7 +55,7 @@ func New(root string, options ...func(*NablaFactory) error) (Factory, error) {
 	}
 	l := &NablaFactory{
 		Root: root,
-		//InitArgs: []string{"/proc/self/exe", "init"},
+        LLCHandler: llcHandler,
 	}
 
 	for _, opt := range options {
@@ -69,6 +70,8 @@ func New(root string, options ...func(*NablaFactory) error) (Factory, error) {
 type NablaFactory struct {
 	// Root directory for the factory to store state.
 	Root string
+    // LLCHandler is the set of low level container handlers
+    LLCHandler ll.RunllcHandler
 }
 
 func isPauseContainer(config *configs.Config) bool {
